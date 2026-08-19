@@ -1,0 +1,249 @@
+.admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page-title {
+  font-size: 1.8rem;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border: 1px solid #eee;
+}
+
+.card h3 {
+  font-size: 1.2rem;
+  margin-bottom: 16px;
+  color: #333;
+}
+
+.scan-description {
+  color: #666;
+  margin-bottom: 16px;
+}
+
+.scan-description code {
+  background: #f0f4ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #1a73e8;
+}
+
+.scan-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.scan-button {
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.scan-button:hover:not(:disabled) {
+  background: #388e3c;
+}
+
+.scan-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.refresh-button {
+  padding: 12px 24px;
+  font-size: 1rem;
+  background: white;
+  color: #555;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.refresh-button:hover {
+  background: #f5f5f5;
+  border-color: #bbb;
+}
+
+.message {
+  padding: 10px 16px;
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+/* Status Section */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.status-label {
+  font-size: 0.85rem;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.status-value {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.progress-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 10px;
+  background: #e0e0e0;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1a73e8, #4caf50);
+  border-radius: 5px;
+  transition: width 0.5s ease;
+}
+
+.progress-text {
+  font-weight: 600;
+  color: #555;
+  min-width: 50px;
+}
+
+.status-time {
+  display: flex;
+  gap: 24px;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.error-box {
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: #fdecea;
+  color: #d32f2f;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.no-data {
+  color: #999;
+  text-align: center;
+  padding: 24px;
+}
+
+/* Files Table */
+.files-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.files-table th {
+  text-align: left;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-bottom: 2px solid #e0e0e0;
+  color: #555;
+  font-weight: 600;
+}
+
+.files-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.files-table tbody tr:hover {
+  background: #f8f9ff;
+}
+
+.file-name-cell {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.table-pagination button {
+  padding: 6px 14px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.table-pagination button:hover:not(:disabled) {
+  background: #f0f4ff;
+}
+
+.table-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.download-button {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  background: #e3f2fd;
+  color: #1a73e8;
+  border: 1px solid #bbdefb;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.download-button:hover {
+  background: #1a73e8;
+  color: white;
+  border-color: #1a73e8;
+}
