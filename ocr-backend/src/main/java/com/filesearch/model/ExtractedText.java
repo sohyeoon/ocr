@@ -36,6 +36,11 @@ public class ExtractedText {
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
+    
+    // -----------------------------------
+    @Column(name = "content_order")
+    private Integer contentOrder;
+    // -----------------------------------
 
     @PrePersist
     protected void onCreate() {

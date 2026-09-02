@@ -57,7 +57,7 @@ public class FileScanService {
                 throw new IOException("스캔 경로가 존재하지 않거나 디렉토리가 아닙니다: " + basePath);
             }
 
-            List<File> files = scanFiles(baseDir);
+            List<File> files = scanFiles(baseDir);  // 지원되는 형식인지 확인 후 파일 목록 반환
             job.setTotalFiles(files.size());
             processingJobRepository.save(job);
 

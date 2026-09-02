@@ -7,7 +7,8 @@ spring:
 
   datasource:
 #    url: jdbc:postgresql://localhost:55432/postgres
-    url: jdbc:postgresql://172.21.20.51:55432/ocr
+#    url: jdbc:postgresql://172.21.20.51:55432/ocr
+    url: jdbc:postgresql://172.21.0.219:55432/ocr
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
@@ -23,7 +24,7 @@ spring:
 
   kafka:
     #bootstrap-servers: localhost:9092
-    bootstrap-servers: 172.21.20.51:9092
+    bootstrap-servers: 172.21.0.219:9092
     consumer:
       group-id: file-search-group
       auto-offset-reset: earliest
@@ -41,7 +42,7 @@ file-scan:
 # OpenSearch 설정
 opensearch:
 #  host: localhost
-  host: 172.21.20.51
+  host: 172.21.0.219
   port: 9200
   scheme: https
   username: admin
@@ -51,7 +52,7 @@ opensearch:
 # PaddleOCR 설정 (Python REST API 서비스)
 paddle-ocr:
 #  api-url: http://localhost:45678/ocr
-  api-url: http://172.21.20.51:45678/ocr
+  api-url: http://172.21.0.219:45678/ocr
   enabled: true
 
 # Kafka 토픽 설정

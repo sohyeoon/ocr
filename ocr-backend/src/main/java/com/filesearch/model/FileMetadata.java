@@ -47,6 +47,16 @@ public class FileMetadata {
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
+    
+    // ---------------------------------------
+    @Column(name = "parent_id")
+    private Long parentId;
+    
+    @Column(name = "depth")
+    private Integer depth;
+    
+    // ---------------------------------------
+    
 
     @PrePersist
     protected void onCreate() {

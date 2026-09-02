@@ -13,4 +13,5 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
     List<FileMetadata> findByStatus(FileStatus status);
     long countByStatus(FileStatus status);
     boolean existsByFilePath(String filePath);
+	List<FileMetadata> findByParentId(Long valueOf);
 }

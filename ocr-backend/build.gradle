@@ -12,6 +12,9 @@ java {
 }
 
 repositories {
+	flatDir {
+        dirs 'libs'
+    }
     mavenCentral()
 }
 
@@ -48,6 +51,19 @@ dependencies {
     testImplementation 'org.springframework.kafka:spring-kafka-test'
 
     implementation 'org.apache.commons:commons-lang3:3.18.0'
+    
+    // Apache POI
+    implementation 'org.apache.poi:poi:5.4.1'
+    implementation 'org.apache.poi:poi-ooxml:5.4.1'
+    
+    // Swagger / OpenAPI
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+	
+	// libs 폴더 안 jar 4개를 이름으로 직접 참조
+    implementation ':ridl'
+    implementation ':jurt'
+    implementation ':unoil'
+    implementation ':juh'
 }
 
 tasks.named('test') {
