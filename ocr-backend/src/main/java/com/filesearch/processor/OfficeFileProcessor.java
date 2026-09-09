@@ -1,15 +1,29 @@
 package com.filesearch.processor;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.openxml4j.opc.PackagePart;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.springframework.stereotype.Component;
 
+import com.filesearch.model.dto.EmbeddedObjectInfo;
 import com.filesearch.model.dto.FileProcessRequest;
 import com.filesearch.model.dto.FileProcessResult;
-import com.filesearch.processor.office.DocxProcessor;
-import com.filesearch.processor.office.PptxProcessor;
-import com.filesearch.processor.office.XlsxProcessor;
+import com.filesearch.service.converter.LibreOfficeConverter;
+import com.filesearch.service.embedded.EmbeddedFileExtractService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,102 +34,58 @@ import lombok.extern.slf4j.Slf4j;
 public class OfficeFileProcessor implements FileProcessor {
 
     private static final Set<String> OFFICE_EXTENSIONS = Set.of(
-            ".docx",
-            ".pptx",
-            ".xlsx"
+            ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"
     );
 
-    private final DocxProcessor docxProcessor;
-    private final PptxProcessor pptxProcessor;
-    private final XlsxProcessor xlsxProcessor;
+    private final LibreOfficeConverter libreOfficeConverter;
+    private final DocumentFileProcessor documentFileProcessor;
+    private final EmbeddedFileExtractService embeddedFileExtractService;
 
-    /**
-     * Office 파일 여부 확인
-     */
     @Override
     public boolean supports(String extension) {
-
-        if (extension == null) {
-            return false;
-        }
-
-        return OFFICE_EXTENSIONS.contains(
-                extension.toLowerCase(Locale.ROOT)
-        );
+        if (extension == null) return false;
+        return OFFICE_EXTENSIONS.contains(extension.toLowerCase(Locale.ROOT));
     }
 
-    /**
-     * Office 파일 종류에 따라
-     * 실제 Office Processor로 전달
-     */
     @Override
-    public FileProcessResult process(
-            FileProcessRequest request) throws Exception {
+    public FileProcessResult process(FileProcessRequest request) throws Exception {
+        String extension = normalizeExtension(request.getFileExtension());
+        log.info("[OFFICE] Office 파일 처리 시작 - file={}, extension={}", request.getFileName(), extension);
 
-        String extension = normalizeExtension(
-                request.getFileExtension()
-        );
+        File inputFile = new File(request.getFilePath());
+        File pdfFile = null;
 
-        log.info(
-                "[OFFICE] Office 파일 처리 시작 - file={}, extension={}",
-                request.getFileName(),
-                extension
-        );
+        try {
+            pdfFile = libreOfficeConverter.convertToPdf(inputFile);
+            FileProcessRequest pdfRequest = FileProcessRequest.builder()
+                    .fileId(request.getFileId())
+                    .fileName(pdfFile.getName())
+                    .filePath(pdfFile.getAbsolutePath())
+                    .fileExtension(".pdf")
+                    .build();
 
-        return switch (extension) {
+            FileProcessResult mainResult = documentFileProcessor.process(pdfRequest);
 
-            case ".docx" -> {
-                log.info(
-                        "[OFFICE] DOCX Processor로 전달: {}",
-                        request.getFileName()
-                );
+            List<EmbeddedObjectInfo> embeddedObjects = embeddedFileExtractService.extractAll(inputFile, extension);
 
-                yield docxProcessor.process(request);
+            if (!embeddedObjects.isEmpty()) {
+                log.info("[OFFICE] 총 {}개의 개체가 성공적으로 분석되었습니다. - file={}", embeddedObjects.size(), inputFile.getName());
             }
 
-            case ".pptx" -> {
-                log.info(
-                        "[OFFICE] PPTX Processor로 전달: {}",
-                        request.getFileName()
-                );
+            mainResult.setEmbeddedObjects(embeddedObjects);
+            mainResult.setHasEmbeddedObject(!embeddedObjects.isEmpty());
 
-                yield pptxProcessor.process(request);
+            return mainResult;
+        } finally {
+            if (pdfFile != null && pdfFile.exists()) {
+                // pdfFile.delete();
             }
-
-            case ".xlsx" -> {
-                log.info(
-                        "[OFFICE] XLSX Processor로 전달: {}",
-                        request.getFileName()
-                );
-
-                yield xlsxProcessor.process(request);
-            }
-
-            default -> throw new IllegalArgumentException(
-                    "지원하지 않는 Office 파일 형식: "
-                            + request.getFileExtension()
-            );
-        };
+        }
     }
 
-    /**
-     * 확장자를 소문자 + 앞의 . 포함 형태로 통일
-     */
     private String normalizeExtension(String extension) {
-
-        if (extension == null) {
-            return "";
-        }
-
-        String normalized =
-                extension
-                        .trim()
-                        .toLowerCase(Locale.ROOT);
-
-        if (!normalized.startsWith(".")) {
-            normalized = "." + normalized;
-        }
-
-        return normalized;
+        if (extension == null) return "";
+        String normalized = extension.trim().toLowerCase(Locale.ROOT);
+        return normalized.startsWith(".") ? normalized : "." + normalized;
     }
 }

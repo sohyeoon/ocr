@@ -55,6 +55,10 @@ paddle-ocr:
   api-url: http://172.21.0.219:45678/ocr
   enabled: true
 
+# Gotenberg 설정
+gotenberg:
+  url: http://172.21.0.219:3000/forms/libreoffice/convert
+
 # Kafka 토픽 설정
 kafka:
   topics:

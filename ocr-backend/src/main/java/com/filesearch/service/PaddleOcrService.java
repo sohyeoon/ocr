@@ -1,9 +1,19 @@
 package com.filesearch.service;
 
 import java.io.File;
+import java.util.List;
+import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -43,10 +53,33 @@ public class PaddleOcrService {
 
         /*
          * 기존 FileExtractionService의
-         * extractWithPaddleOcr() 내용을 여기에 이동
+         * extractWithPaddleOcr() 내용
          */
+        try {
+            RestTemplate restTemplate = new RestTemplate();
 
-        // TODO 기존 OCR API 호출 코드 이동
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", new FileSystemResource(file));
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+            ResponseEntity<Map> response = restTemplate.postForEntity(
+                    paddleOcrApiUrl, requestEntity, Map.class);
+
+            if (response.getBody() != null && response.getBody().containsKey("texts")) {
+                Object textObj = response.getBody().get("texts");
+                if (textObj instanceof List) {
+                    return String.join("\n", (List<String>) textObj);
+                }
+                return textObj.toString();
+            }
+        } catch (Exception e) {
+            log.error("[PaddleOCR] 호출 실패 URL={}, FILE={}", paddleOcrApiUrl, filePath, e);
+            throw e;
+        }
 
         return "";
     }

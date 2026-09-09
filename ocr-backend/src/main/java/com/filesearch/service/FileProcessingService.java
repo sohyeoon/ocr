@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.filesearch.model.dto.EmbeddedObjectInfo;
 import com.filesearch.model.dto.FileProcessRequest;
 import com.filesearch.model.dto.FileProcessResult;
+import com.filesearch.model.dto.OfficeProcessResult;
 import com.filesearch.model.ExtractedText;
 import com.filesearch.model.FileMetadata;
 import com.filesearch.model.FileStatus;
@@ -197,12 +198,22 @@ public class FileProcessingService {
      */
     private FileProcessor findProcessor(
             String extension) {
-    	
-    	System.out.println("fileProcessors = " + fileProcessors);
+        
+        if (extension == null) {
+            throw new IllegalArgumentException("확장자 정보가 없습니다.");
+        }
+
+        System.out.println("Searching processor for extension: " + extension);
+        System.out.println("fileProcessors = " + fileProcessors);
+
+        String withDot = extension.startsWith(".") ? extension : "." + extension;
+        String withoutDot = extension.startsWith(".") ? extension.substring(1) : extension;
 
         return fileProcessors.stream()
                 .filter(processor ->
-                        processor.supports(extension)
+                        processor.supports(extension) || 
+                        processor.supports(withDot) || 
+                        processor.supports(withoutDot)
                 )
                 .findFirst()
                 .orElseThrow(() ->
@@ -220,6 +231,28 @@ public class FileProcessingService {
     private void saveExtractedText(
             FileMetadata fileMetadata,
             FileProcessResult result) {
+
+        if (result.getPages() != null && !result.getPages().isEmpty()) {
+            log.info("[FILE PROCESS] 페이지별 텍스트 저장 시작: {}", fileMetadata.getFileName());
+            
+            for (int i = 0; i < result.getPages().size(); i++) {
+                FileProcessResult.PageResult page = result.getPages().get(i);
+                
+                ExtractedText extractedText =
+                        ExtractedText.builder()
+                                .fileMetadata(fileMetadata)
+                                .content(page.getContent())
+                                .pageNumber(page.getPageNumber())
+                                .contentOrder(i + 1)
+                                .extractionType(page.getExtractionMethod())
+                                .build();
+                
+                extractedTextRepository.save(extractedText);
+            }
+            
+            log.info("[FILE PROCESS] 총 {}개 페이지 저장 완료: {}", result.getPages().size(), fileMetadata.getFileName());
+            return;
+        }
 
         String content =
                 result.getContent();
@@ -360,11 +393,20 @@ public class FileProcessingService {
         // ==========================================
         // 3. Embedded Metadata 생성
         // ==========================================
-
+        
         String extension =
-                getFileExtension(
-                        embeddedFile.getName()
-                );
+                embeddedObject.getFileExtension();
+
+        log.info(
+                "[DEBUG-METADATA] 추출 파일명: {}, 판별된 확장자: [{}], EmbeddedObjectInfo 제공 확장자: [{}]",
+                embeddedFile.getName(),
+                extension,
+                embeddedObject.getFileExtension()
+        );
+
+        String dbExtension = (extension != null && !extension.startsWith(".")) 
+                             ? "." + extension 
+                             : extension;
 
         FileMetadata embeddedMetadata =
                 FileMetadata.builder()
@@ -375,7 +417,7 @@ public class FileProcessingService {
                                 embeddedFile.getAbsolutePath()
                         )
                         .fileExtension(
-                                extension
+                                dbExtension
                         )
                         .fileSize(
                                 embeddedFile.length()
