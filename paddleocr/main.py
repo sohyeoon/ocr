@@ -24,6 +24,8 @@ from config import (
 )
 
 from ocr_service import OCRService
+from olePageno import OlePageLocator
+
 
 app = FastAPI(
     title="PaddleOCR API"
@@ -39,6 +41,8 @@ app.add_middleware(
 
 
 ocr_service = OCRService()
+ole_locator = OlePageLocator()
+
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
@@ -85,3 +89,31 @@ async def ocr(file: UploadFile = File(...)):
                 "message": str(e)
             }
         )
+
+@app.post("/ole-pagenumber")
+async def ole_pagenumber(file: UploadFile = File(...)):
+    try:
+        file_id = str(uuid.uuid4())
+        file_path = INPUT_DIR / (file_id + Path(file.filename).suffix)
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        result = ole_locator.get_ole_page_numbers(str(file_path))
+
+        file_path.unlink(missing_ok=True)
+
+        return JSONResponse(
+            content={"success": True, "data": result}
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": str(e)
+            }
+        )
+
