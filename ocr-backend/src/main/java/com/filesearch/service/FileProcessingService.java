@@ -429,6 +429,8 @@ public class FileProcessingService {
                                 parentMetadata.getId()
                         )
                         .depth(1)
+                        .parentPageNumber(embeddedObject.getParentPageNumber())
+                        .fileHash(embeddedObject.getFileHash())
                         .build();
 
         embeddedMetadata =

@@ -217,8 +217,13 @@ class OlePageLocator:
                 # Calculate SHA-256 hash of the actual OLE object binary
                 ole_bytes = zf.read(ole_target)
                 file_hash = hashlib.sha256(ole_bytes).hexdigest()
-
+                
+                # DEBUG LOG FOR HASH MATCHING
+                header_hex = ole_bytes[:16].hex(' ').upper()
+                print(f"[HASH-DEBUG] PYTHON DATA - Size: {len(ole_bytes)} bytes, Hash: {file_hash}, Header: [{header_hex}]")
+ 
                 ole_items.append(OleItem(
+
                     ole_name=ole_target, preview_name=preview_target, order_hint=order,
                     preview_bytes=zf.read(preview_target), preview_ext=os.path.splitext(preview_target)[1].lstrip(".").lower(),
                     anchor_text=anchors.get(id(obj_elem), ""),

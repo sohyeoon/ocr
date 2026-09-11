@@ -28,6 +28,8 @@ import org.springframework.web.client.RestTemplate;
 import com.filesearch.model.dto.EmbeddedObjectInfo;
 import com.filesearch.model.dto.FileProcessRequest;
 import com.filesearch.model.dto.FileProcessResult;
+import com.filesearch.repository.FileMetadataRepository;
+import com.filesearch.service.OleMappingService;
 import com.filesearch.service.converter.LibreOfficeConverter;
 import com.filesearch.service.embedded.EmbeddedFileExtractService;
 
@@ -46,6 +48,8 @@ public class OfficeFileProcessor implements FileProcessor {
     private final LibreOfficeConverter libreOfficeConverter;
     private final DocumentFileProcessor documentFileProcessor;
     private final EmbeddedFileExtractService embeddedFileExtractService;
+    private final FileMetadataRepository fileMetadataRepository;
+    //private final OleMappingService oleMappingService;
 
     @Override
     public boolean supports(String extension) {
@@ -86,7 +90,16 @@ public class OfficeFileProcessor implements FileProcessor {
                     HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
                     String url = "http://localhost:8000/ole-pagenumber"; 
                     ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
-                    log.info("[TEST-OLE] API 응답 결과: {}", response.getBody());
+                    if (response.getBody() != null) {
+                    	List<Map<String, Object>> results =
+                                (List<Map<String, Object>>) response.getBody().get("data");
+
+                        updateEmbeddedParentPageNumbers(
+                                embeddedObjects,
+                                results
+                        );
+                    }
+                    log.info("[OLE] API 매핑 업데이트 완료: {}", response.getBody());
                 } catch (Exception e) {
                     log.error("[TEST-OLE] API 호출 중 오류 발생: {}", e.getMessage());
                 }
@@ -111,5 +124,124 @@ public class OfficeFileProcessor implements FileProcessor {
         if (extension == null) return "";
         String normalized = extension.trim().toLowerCase(Locale.ROOT);
         return normalized.startsWith(".") ? normalized : "." + normalized;
+    }
+    
+    private void updateEmbeddedParentPageNumbers(
+            List<EmbeddedObjectInfo> embeddedObjects,
+            List<Map<String, Object>> mappingResults
+    ) {
+
+        if (embeddedObjects == null || embeddedObjects.isEmpty()) {
+            return;
+        }
+
+        if (mappingResults == null || mappingResults.isEmpty()) {
+            log.info("[OLE] 페이지 매핑 결과가 없습니다.");
+            return;
+        }
+
+        log.info(
+                "[OLE] Embedded 객체 {}개와 페이지 매핑 시작",
+                embeddedObjects.size()
+        );
+
+        for (Map<String, Object> result : mappingResults) {
+
+            String oleName =
+                    (String) result.get("ole_name");
+
+            Integer pageNumber =
+                    parsePageNumber(result.get("page"));
+
+            if (oleName == null || pageNumber == null) {
+                log.warn(
+                        "[OLE] 잘못된 API 결과 스킵: oleName={}, page={}",
+                        oleName,
+                        pageNumber
+                );
+                continue;
+            }
+
+            /*
+             * API의 ole_name과
+             * EmbeddedObjectInfo의 oleName 비교
+             */
+            for (EmbeddedObjectInfo embeddedObject : embeddedObjects) {
+
+                String embeddedOleName =
+                        embeddedObject.getOleName();
+
+                if (embeddedOleName == null) {
+                    continue;
+                }
+
+                /*
+                 * oleName이 같지 않으면 다음 Embedded 객체 확인
+                 */
+                if (!embeddedOleName.equals(oleName)) {
+                    continue;
+                }
+
+                /*
+                 * 같은 OLE 객체를 찾았으므로
+                 * 해당 EmbeddedObjectInfo에 부모 페이지 번호 저장
+                 */
+                embeddedObject.setParentPageNumber(pageNumber);
+
+                log.info(
+                        "[OLE] 부모 페이지 매핑 성공: oleName={}, page={}",
+                        oleName,
+                        pageNumber
+                );
+
+                /*
+                 * 현재 oleName에 해당하는 Embedded 객체를 찾았으므로
+                 * 다음 mappingResults로 이동
+                 */
+                break;
+            }
+        }
+
+        log.info("[OLE] Embedded 객체 페이지 매핑 완료");
+    }
+    
+    private String extractEmbeddedFileName(
+            String oleName
+    ) {
+
+        if (oleName == null || oleName.isBlank()) {
+            return null;
+        }
+
+        String normalized =
+                oleName.replace("\\", "/");
+
+        int index =
+                normalized.lastIndexOf("/");
+
+        if (index < 0 || index == normalized.length() - 1) {
+            return null;
+        }
+
+        return normalized.substring(index + 1);
+    }
+    
+    private Integer parsePageNumber(Object page) {
+
+        if (page == null) {
+            return null;
+        }
+
+        if (page instanceof Number) {
+            return ((Number) page).intValue();
+        }
+
+        try {
+            return Integer.parseInt(
+                    page.toString()
+            );
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

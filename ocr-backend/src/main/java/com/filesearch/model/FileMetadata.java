@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.time.OffsetDateTime;
 
+@Data
 @Entity
 @Table(name = "file_metadata")
 @Getter
@@ -54,6 +55,15 @@ public class FileMetadata {
     
     @Column(name = "depth")
     private Integer depth;
+
+    @Column(name = "file_hash", length = 64)
+    private String fileHash;
+    
+    @Column(name = "parent_page_number")
+    private Integer parentPageNumber;
+
+   //@Column(name = "page_num")
+   // private Integer pageNumber;
     
     // ---------------------------------------
     

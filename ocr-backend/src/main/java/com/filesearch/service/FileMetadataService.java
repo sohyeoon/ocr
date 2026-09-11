@@ -237,6 +237,8 @@ public class FileMetadataService {
                         // Embedded depth
                         .depth(childDepth)
 
+                        .fileHash(embeddedObject.getFileHash())
+
                         .build();
 
         /*

@@ -1,159 +1,217 @@
 package com.filesearch.service.embedded;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import com.filesearch.model.dto.EmbeddedObjectInfo;
+import lombok.extern.slf4j.Slf4j;
 
 import org.apache.poi.poifs.filesystem.DirectoryNode;
-import org.apache.poi.poifs.filesystem.DocumentEntry;
 import org.apache.poi.poifs.filesystem.DocumentInputStream;
+import org.apache.poi.poifs.filesystem.DocumentNode;
+import org.apache.poi.poifs.filesystem.Entry;
 import org.apache.poi.poifs.filesystem.FileMagic;
 import org.apache.poi.poifs.filesystem.Ole10Native;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
-import org.springframework.stereotype.Component;
 
-import com.filesearch.model.dto.EmbeddedObjectInfo;
+import org.springframework.stereotype.Service;
 
-import lombok.extern.slf4j.Slf4j;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
-@Component
+import java.io.BufferedInputStream;
+import java.io.InputStream;
+
 @Slf4j
+@Service
 public class OleEmbeddedExtractor {
 
     /**
-     * OLE 객체를 분석하여 실제 Embedded 파일을 추출합니다.
+     * OLE Embedded 파일 추출
      *
-     * 지원 형태
+     * 처리 순서
      *
-     * 1. OLE2 Compound File
-     *    └─ \1Ole10Native
-     *
-     * 2. Package / \1Ole10Native stream
-     *    └─ Ole10Native raw data
-     *
-     * 최종 결과:
-     *    실제 파일명 + 실제 파일 데이터
+     * 1. OLE2 파일이면 \1Ole10Native 탐색
+     * 2. Ole10Native에서 원본 파일명 추출
+     * 3. 원본 파일명이 있으면 그대로 사용
+     * 4. 원본 파일명이 없을 때만 Magic Number로 확장자 추정
+     * 5. extractedPath에 실제 추출 파일 저장
      */
-    public EmbeddedObjectInfo extract(File embeddedFile) throws Exception {
+	public EmbeddedObjectInfo extract(File embeddedFile) {
 
-        if (embeddedFile == null || !embeddedFile.exists()) {
-            throw new IllegalArgumentException(
-                    "Embedded 파일이 존재하지 않습니다."
-            );
-        }
+	    if (embeddedFile == null || !embeddedFile.exists()) {
+	        throw new IllegalArgumentException(
+	                "Embedded file does not exist: " + embeddedFile
+	        );
+	    }
 
-        FileMagic magic = FileMagic.valueOf(embeddedFile);
+	    try (InputStream inputStream =
+	                 new BufferedInputStream(
+	                         new FileInputStream(embeddedFile)
+	                 )) {
 
-        log.info(
-                "[OLE] 객체 분석 시작 - name={}, size={}, magic={}",
-                embeddedFile.getName(),
-                embeddedFile.length(),
-                magic
-        );
+	        FileMagic fileMagic =
+	                FileMagic.valueOf(inputStream);
 
-        /*
-         * 실제 OLE2 Compound File
-         *
-         * 예:
-         * oleObject1.bin
-         *
-         * 내부:
-         *   Root
-         *    └─ \1Ole10Native
-         */
-        if (magic == FileMagic.OLE2) {
-            return extractFromOle2(embeddedFile);
-        }
+	        log.debug(
+	                "Embedded file detected. file={}, magic={}",
+	                embeddedFile.getName(),
+	                fileMagic
+	        );
 
-        /*
-         * OLE2가 아닌 경우
-         *
-         * 현재 EmbeddedFileExtractService에서
-         * Package 또는 \1Ole10Native stream을
-         * 임시 파일로 저장해서 이쪽으로 전달할 수 있음.
-         */
-        return extractFromNativeStream(embeddedFile);
-    }
+	        if (fileMagic == FileMagic.OLE2) {
+	            return extractFromOle2(embeddedFile);
+	        }
 
+	        return extractFromNativeStream(embeddedFile);
+
+	    } catch (Exception e) {
+
+	        log.error(
+	                "Failed to extract embedded file: {}",
+	                embeddedFile.getAbsolutePath(),
+	                e
+	        );
+
+	        throw new RuntimeException(
+	                "Failed to extract embedded file: "
+	                        + embeddedFile.getName(),
+	                e
+	        );
+	    }
+	}
 
     /**
      * OLE2 Compound Document에서
-     * \1Ole10Native stream을 찾아 실제 파일을 추출합니다.
+     * \1Ole10Native stream을 찾는다.
      */
-    private EmbeddedObjectInfo extractFromOle2(File oleFile)
-            throws Exception {
+    private EmbeddedObjectInfo extractFromOle2(
+            File file
+    ) throws IOException {
 
-        try (POIFSFileSystem fs = new POIFSFileSystem(oleFile)) {
+        try (POIFSFileSystem fs =
+                     new POIFSFileSystem(file)) {
 
             DirectoryNode root = fs.getRoot();
 
-            DocumentEntry nativeEntry =
-                    findNativeStream(root);
-
-            if (nativeEntry == null) {
-
-                throw new IllegalArgumentException(
-                        "OLE2 내부에서 \\1Ole10Native stream을 찾을 수 없습니다: "
-                                + oleFile.getName()
-                );
-            }
-
-            byte[] nativeData;
-
-            try (DocumentInputStream dis =
-                         new DocumentInputStream(nativeEntry)) {
-
-                nativeData = dis.readAllBytes();
-            }
-
-            log.info(
-                    "[OLE] \\1Ole10Native 발견 - {} bytes",
-                    nativeData.length
-            );
-
-            return createEmbeddedFile(
-                    nativeData,
-                    oleFile.getParentFile()
-            );
-        }
-    }
-
-
-    /**
-     * OLE2 내부를 재귀적으로 탐색하여
-     * \1Ole10Native stream을 찾습니다.
-     *
-     * Root 바로 아래에 있을 수도 있고
-     * Object Storage 내부에 있을 수도 있으므로
-     * 재귀 탐색합니다.
-     */
-    private DocumentEntry findNativeStream(DirectoryNode directory) {
-
-        for (org.apache.poi.poifs.filesystem.Entry entry : directory) {
-
             /*
-             * 실제 stream
+             * 일반적인 구조
+             *
+             * Root
+             *  └ ObjectPool
+             *      └ _xxxxxxx
+             *          └ \1Ole10Native
              */
-            if (entry instanceof DocumentEntry documentEntry) {
+            if (root.hasEntry("ObjectPool")) {
 
-                if (Ole10Native.OLE10_NATIVE.equals(
-                        documentEntry.getName())) {
+                Entry objectPoolEntry =
+                        root.getEntry("ObjectPool");
 
-                    return documentEntry;
+                if (objectPoolEntry instanceof DirectoryNode) {
+
+                    DirectoryNode objectPool =
+                            (DirectoryNode) objectPoolEntry;
+
+                    EmbeddedObjectInfo result =
+                            findOle10Native(objectPool);
+
+                    if (result != null) {
+                        return result;
+                    }
                 }
             }
 
             /*
-             * 하위 Storage
+             * ObjectPool이 없는 경우
+             * Root부터 전체 재귀 탐색
              */
-            else if (entry instanceof DirectoryNode childDirectory) {
+            EmbeddedObjectInfo result =
+                    findOle10Native(root);
 
-                DocumentEntry found =
-                        findNativeStream(childDirectory);
+            if (result != null) {
+                return result;
+            }
 
-                if (found != null) {
-                    return found;
+            /*
+             * \1Ole10Native을 찾지 못한 경우
+             * OLE 파일 자체를 fallback 처리
+             */
+            byte[] data =
+                    Files.readAllBytes(file.toPath());
+
+            return createEmbeddedFile(
+                    data,
+                    null,
+                    calculateHash(data)
+            );
+        }
+    }
+
+    /**
+     * Directory 내부를 재귀적으로 탐색하여
+     * \1Ole10Native stream을 찾는다.
+     */
+    private EmbeddedObjectInfo findOle10Native(
+            DirectoryNode directory
+    ) throws IOException {
+
+        for (Entry entry : directory) {
+
+            /*
+             * POI에서 OLE Native Stream은
+             * 일반적으로 \1Ole10Native이라는 이름을 가진다.
+             */
+            if ("\u0001Ole10Native".equalsIgnoreCase(
+                    entry.getName()
+            )) {
+
+                if (entry instanceof DocumentNode) {
+
+                    DocumentNode documentNode =
+                            (DocumentNode) entry;
+
+                    try (DocumentInputStream inputStream =
+                                 new DocumentInputStream(
+                                         documentNode
+                                 )) {
+
+                        byte[] nativeData =
+                                inputStream.readAllBytes();
+
+                        log.debug(
+                                "Found Ole10Native. directory={}, size={}",
+                                directory.getPath(),
+                                nativeData.length
+                        );
+
+                        return createEmbeddedFile(
+                                nativeData,
+                                null,
+                                calculateHash(nativeData)
+                        );
+                    }
+                }
+            }
+
+            /*
+             * 하위 Storage가 있으면 계속 탐색
+             */
+            if (entry instanceof DirectoryNode) {
+
+                DirectoryNode childDirectory =
+                        (DirectoryNode) entry;
+
+                EmbeddedObjectInfo result =
+                        findOle10Native(childDirectory);
+
+                if (result != null) {
+                    return result;
                 }
             }
         }
@@ -161,456 +219,357 @@ public class OleEmbeddedExtractor {
         return null;
     }
 
-
     /**
-     * Package / \1Ole10Native 등의
-     * raw stream을 분석합니다.
+     * OLE2가 아닌 native stream 처리
      */
     private EmbeddedObjectInfo extractFromNativeStream(
-            File streamFile) throws Exception {
+            File file
+    ) throws IOException {
 
-        byte[] data =
-                Files.readAllBytes(streamFile.toPath());
-
-        if (data.length == 0) {
-
-            throw new IllegalArgumentException(
-                    "Embedded stream이 비어 있습니다: "
-                            + streamFile.getName()
-            );
-        }
-
-        log.info(
-                "[OLE] Raw stream 분석 - {} bytes",
-                data.length
-        );
+        byte[] nativeData =
+                Files.readAllBytes(file.toPath());
 
         return createEmbeddedFile(
-                data,
-                streamFile.getParentFile()
+                nativeData,
+                null,
+                calculateHash(nativeData)
         );
     }
 
-
     /**
-     * Ole10Native 구조를 파싱하고
-     * 실제 embedded 파일을 생성합니다.
+     * 실제 Embedded 파일 생성
+     *
+     * 가장 중요한 부분.
+     *
+     * ---------------------------------------------------------
+     * 원본 파일명이 있는 경우
+     * ---------------------------------------------------------
+     *
+     * Ole10Native
+     *      ↓
+     * getFileName()
+     *      ↓
+     * test.xlsx
+     *      ↓
+     * 그대로 사용
+     *
+     * 절대로
+     *
+     * test.xlsx + .xlsx
+     *
+     * 처리를 하지 않는다.
+     *
+     * ---------------------------------------------------------
+     * 원본 파일명이 없는 경우
+     * ---------------------------------------------------------
+     *
+     * Magic Number
+     *      ↓
+     * xlsx
+     *      ↓
+     * embedded_file.xlsx
      */
     private EmbeddedObjectInfo createEmbeddedFile(
             byte[] nativeData,
-            File outputDirectory) throws Exception {
+            String fallbackFileName,
+            String rawHash
+    ) throws IOException {
 
-        Ole10Native ole10 = null;
-
-        try {
-            ole10 = new Ole10Native(
-                    nativeData,
-                    0
-            );
-        } catch (Exception e) {
-            log.warn("[OLE] Ole10Native 파싱 실패. Raw Binary 분석을 시도합니다. Error: {}", e.getMessage());
-        }
-
-        String fileName;
-        byte[] fileData;
-
-        if (ole10 != null) {
-            String originalFileName = ole10.getFileName();
-            fileName = extractFileName(originalFileName);
-            fileData = ole10.getDataBuffer();
-        } else {
-            fileData = nativeData;
-            fileName = determineExtensionByMagicNumber(fileData);
-        }
-
-        if (fileName == null || fileName.isBlank()) {
-            fileName = "embedded_file.bin";
-        }
-
-        if (fileData == null || fileData.length == 0) {
-            throw new IllegalArgumentException(
-                    "임베디드 객체 내부 실제 파일 데이터가 없습니다."
+        if (nativeData == null || nativeData.length == 0) {
+            throw new IOException(
+                    "Embedded data is empty."
             );
         }
 
-        String detectedFullExt = determineExtensionByMagicNumber(fileData);
-        String cleanExt = getExtension(detectedFullExt); 
-        String dotExt = (cleanExt == null || cleanExt.isBlank()) ? ".bin" : "." + cleanExt;
+        String fileName = null;
 
-        if (!fileName.toLowerCase().endsWith(dotExt.toLowerCase())) {
-            fileName = fileName + dotExt;
-        }
+        /*
+         * Magic Number 결과는
+         * 원본 파일명이 없을 때만 사용한다.
+         */
+        String detectedExtension = null;
 
-        Path outputPath =
-                outputDirectory.toPath().resolve(fileName);
-
-        if (Files.exists(outputPath)) {
-            String extension = getExtension(fileName);
-            String baseName = removeExtension(fileName);
-            fileName = baseName + "_" + System.nanoTime() + (extension.isEmpty() ? "" : "." + extension);
-            outputPath = outputDirectory.toPath().resolve(fileName);
-        }
-
-        Files.write(outputPath, fileData);
-
-        log.info(
-                "[OLE] 임베디드 파일 물리적 저장 완료: {} ({} bytes)",
-                outputPath,
-                fileData.length
-        );
-
-        return EmbeddedObjectInfo.builder()
-                .fileName(fileName)
-                .fileExtension(cleanExt)
-                .objectType(ole10 != null ? "OLE" : "RAW_BINARY")
-                .extractedPath(outputPath.toAbsolutePath().toString())
-                .build();
-    }
-
-    private String determineExtensionByMagicNumber(byte[] data) {
-        if (data == null || data.length < 4) {
-            return "embedded_raw_" + System.currentTimeMillis() + ".bin";
-        }
-
-        if (data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46) {
-            return "embedded_pdf_" + System.currentTimeMillis() + ".pdf";
-        }
-
-        if (data[0] == (byte)0xD0 && data[1] == (byte)0xCF && data[2] == 0x11 && data[3] == (byte)0xE0) {
-            return determineLegacyOleExtension(data);
-        }
-
-        if (data[0] == (byte)0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
-            return "embedded_img_" + System.currentTimeMillis() + ".png";
-        }
-
-        if (data[0] == (byte)0xFF && data[1] == (byte)0xD8 && data[2] == (byte)0xFF) {
-            return "embedded_img_" + System.currentTimeMillis() + ".jpg";
-        }
-
-        if (data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04) {
-            return determineOoxmlExtension(data);
-        }
-
-        return "embedded_raw_" + System.currentTimeMillis() + ".bin";
-    }
-
-    private String determineOoxmlExtension(byte[] data) {
+        /*
+         * =====================================================
+         * 1. Ole10Native에서 원본 파일명 추출
+         * =====================================================
+         */
         try {
-            File tempFile = File.createTempFile("ooxml_detect_", ".tmp");
-            Files.write(tempFile.toPath(), data);
 
-            try (java.util.zip.ZipFile zipFile = new java.util.zip.ZipFile(tempFile)) {
-                var entry = zipFile.getEntry("[Content_Types].xml");
-                if (entry != null) {
-                    try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                            new java.io.InputStreamReader(zipFile.getInputStream(entry)))) {
-                        String content = reader.lines().collect(java.util.stream.Collectors.joining());
-                        if (content.contains("spreadsheetml.sheet")) {
-                            return "embedded_xlsx_" + System.currentTimeMillis() + ".xlsx";
-                        } else if (content.contains("presentationml.presentation")) {
-                            return "embedded_pptx_" + System.currentTimeMillis() + ".pptx";
-                        } else if (content.contains("wordprocessingml.document")) {
-                            return "embedded_docx_" + System.currentTimeMillis() + ".docx";
-                        }
-                    }
-                }
-            } finally {
-                tempFile.delete();
+            Ole10Native ole10 =
+                    new Ole10Native(
+                            nativeData,
+                            0
+                    );
+
+            String originalFileName =
+                    ole10.getFileName();
+
+            log.debug(
+                    "Ole10Native original filename={}",
+                    originalFileName
+            );
+
+            if (originalFileName != null
+                    && !originalFileName.isBlank()) {
+
+                /*
+                 * 경로가 포함되어 있을 수 있으므로
+                 * 실제 파일명만 가져온다.
+                 *
+                 * 예:
+                 *
+                 * C:\Users\test\test.xlsx
+                 *      ↓
+                 * test.xlsx
+                 */
+                fileName =
+                        extractFileName(
+                                originalFileName
+                        );
             }
+
         } catch (Exception e) {
-            log.warn("[OLE] OOXML 세부 형식 판별 실패. 기본값 .xlsx 사용. Error: {}", e.getMessage());
+
+            /*
+             * Ole10Native 구조가 아니거나
+             * 파싱할 수 없는 경우 fallback
+             */
+            log.debug(
+                    "Ole10Native parsing failed. "
+                            + "Use fallback filename detection.",
+                    e
+            );
         }
-        return "embedded_office_" + System.currentTimeMillis() + ".xlsx";
-    }
 
-    private String determineLegacyOleExtension(byte[] data) {
-        try {
-            File tempFile = File.createTempFile("ole_detect_", ".tmp");
-            Files.write(tempFile.toPath(), data);
+        /*
+         * =====================================================
+         * 2. 원본 파일명이 없는 경우
+         * =====================================================
+         */
+        if (fileName == null
+                || fileName.isBlank()) {
 
-            try (org.apache.poi.poifs.filesystem.POIFSFileSystem fs = new org.apache.poi.poifs.filesystem.POIFSFileSystem(tempFile)) {
-                org.apache.poi.poifs.filesystem.DirectoryNode root = fs.getRoot();
-                if (root.hasEntry("Workbook")) {
-                    return "embedded_xls_" + System.currentTimeMillis() + ".xls";
-                }
-                if (root.hasEntry("PowerPoint Document") || root.hasEntry("\u0001PowerPoint Document")) {
-                    return "embedded_ppt_" + System.currentTimeMillis() + ".ppt";
-                }
-                return "embedded_doc_" + System.currentTimeMillis() + ".doc";
-            } finally {
-                tempFile.delete();
+            /*
+             * 이때만 Magic Number 검사
+             */
+            detectedExtension =
+                    determineExtensionByMagicNumber(
+                            nativeData
+                    );
+
+            /*
+             * fallback 파일명이 있으면 사용
+             */
+            if (fallbackFileName != null
+                    && !fallbackFileName.isBlank()) {
+
+                fileName =
+                        extractFileName(
+                                fallbackFileName
+                        );
             }
-        } catch (Exception e) {
-            log.warn("[OLE] Legacy OLE 세부 형식 판별 실패. 기본값 .doc 사용. Error: {}", e.getMessage());
-            return "embedded_legacy_" + System.currentTimeMillis() + ".doc";
+
+            /*
+             * fallback 파일명도 없으면
+             * embedded_file.xxx 형태로 생성
+             */
+            if (fileName == null
+                    || fileName.isBlank()) {
+
+                if (detectedExtension != null
+                        && !detectedExtension.isBlank()) {
+
+                    fileName =
+                            "embedded_file."
+                                    + getExtension(
+                                    detectedExtension
+                            );
+
+                } else {
+
+                    fileName =
+                            "embedded_file.bin";
+                }
+            }
+
+            /*
+             * fallback 파일명에는 확장자가 없고
+             * Magic Number로 확장자를 알아낸 경우에만
+             * 확장자를 추가한다.
+             *
+             * 예:
+             *
+             * embedded_file + xlsx
+             *      ↓
+             * embedded_file.xlsx
+             */
+            if (detectedExtension != null
+                    && !detectedExtension.isBlank()
+                    && !hasExtension(fileName)) {
+
+                String cleanExt =
+                        getExtension(
+                                detectedExtension
+                        );
+
+                if (!cleanExt.isBlank()) {
+
+                    fileName +=
+                            "." + cleanExt;
+                }
+            }
         }
-    }
 
+        /*
+         * =====================================================
+         * 3. 파일명 정리
+         * =====================================================
+         */
+        fileName =
+                sanitizeFileName(fileName);
 
-    /**
-     * Ole10Native로 파싱되지 않는 경우
-     *
-     * 실제 데이터 자체가 파일일 가능성을 고려하여
-     * 매직넘버를 확인합니다.
-     */
-    private EmbeddedObjectInfo extractRawBinary(
-            byte[] data,
-            File outputDirectory) throws IOException {
+        if (fileName == null
+                || fileName.isBlank()) {
 
-        String extension =
-                detectExtension(data);
-
-        String fileName =
-                "embedded_" + System.nanoTime();
-
-        if (extension != null) {
-            fileName += "." + extension;
-        } else {
-            fileName += ".bin";
+            fileName =
+                    "embedded_file.bin";
         }
 
-        Path outputPath =
-                createUniqueOutputPath(
-                        outputDirectory,
+        /*
+         * =====================================================
+         * 4. 최종 확장자
+         * =====================================================
+         *
+         * 원본 파일명이
+         *
+         * test.xlsx
+         *
+         * 라면
+         *
+         * fileExtension = xlsx
+         *
+         * 가 된다.
+         */
+        String fileExtension =
+                getExtensionFromFileName(
                         fileName
                 );
 
+        /*
+         * =====================================================
+         * 5. 저장 디렉터리
+         * =====================================================
+         */
+        Path outputDirectory =
+                Paths.get(
+                        System.getProperty(
+                                "java.io.tmpdir"
+                        ),
+                        "embedded"
+                );
+
+        Files.createDirectories(
+                outputDirectory
+        );
+
+        /*
+         * UUID를 앞에 붙여서
+         * 동일한 파일명이 여러 개 존재해도
+         * 충돌하지 않도록 한다.
+         *
+         * 예:
+         *
+         * 7e5..._test.xlsx
+         */
+        String outputFileName =
+                UUID.randomUUID()
+                        + "_"
+                        + fileName;
+
+        Path outputPath =
+                outputDirectory.resolve(
+                        outputFileName
+                );
+
+        /*
+         * 현재 기존 구조와 동일하게
+         * 전달받은 nativeData를 저장한다.
+         */
         Files.write(
                 outputPath,
-                data
+                nativeData
         );
 
-        log.warn(
-                "[OLE] Raw Binary로 저장 - path={}, extension={}",
-                outputPath,
-                extension
+        log.info(
+                "Embedded file extracted. "
+                        + "fileName={}, extension={}, path={}",
+                fileName,
+                fileExtension,
+                outputPath
         );
 
+        /*
+         * =====================================================
+         * 6. 실제 EmbeddedObjectInfo 생성
+         * =====================================================
+         */
         return EmbeddedObjectInfo.builder()
-                .fileName(
-                        outputPath.getFileName().toString()
-                )
-                .fileExtension(
-                        extension == null ? "bin" : extension
-                )
-                .objectType("RAW_BINARY")
+                .fileName(fileName)
+                .fileExtension(fileExtension)
+                .objectType("OLE")
                 .extractedPath(
-                        outputPath.toAbsolutePath().toString()
+                        outputPath.toString()
                 )
+                .fileHash(rawHash)
                 .build();
     }
 
-
     /**
-     * 실제 파일 데이터의 확장자를 판별합니다.
+     * 경로가 포함된 파일명에서
+     * 실제 파일명만 추출한다.
      *
-     * 주의:
-     * ZIP이라고 무조건 xlsx가 아님.
+     * 예:
      *
-     * xlsx / docx / pptx 모두 ZIP 기반이므로
-     * 여기서는 OOXML 내부 구조까지 확인하지 않고
-     * 우선 zip으로 판별합니다.
-     */
-    private String detectExtension(byte[] data) {
-
-        if (data == null || data.length < 4) {
-            return null;
-        }
-
-
-        /*
-         * PDF
-         * %PDF
-         */
-        if (data[0] == 0x25
-                && data[1] == 0x50
-                && data[2] == 0x44
-                && data[3] == 0x46) {
-
-            return "pdf";
-        }
-
-
-        /*
-         * PNG
-         */
-        if (data[0] == (byte) 0x89
-                && data[1] == 0x50
-                && data[2] == 0x4E
-                && data[3] == 0x47) {
-
-            return "png";
-        }
-
-
-        /*
-         * JPEG
-         */
-        if (data[0] == (byte) 0xFF
-                && data[1] == (byte) 0xD8
-                && data[2] == (byte) 0xFF) {
-
-            return "jpg";
-        }
-
-
-        /*
-         * GIF
-         */
-        if (data[0] == 0x47
-                && data[1] == 0x49
-                && data[2] == 0x46) {
-
-            return "gif";
-        }
-
-
-        /*
-         * OLE2
-         */
-        if (data[0] == (byte) 0xD0
-                && data[1] == (byte) 0xCF
-                && data[2] == 0x11
-                && data[3] == (byte) 0xE0) {
-
-            return detectOle2Extension(data);
-        }
-
-
-        /*
-         * ZIP / OOXML
-         *
-         * 여기서 xlsx라고 확정하지 않는다.
-         */
-        if (data[0] == 0x50
-                && data[1] == 0x4B
-                && data[2] == 0x03
-                && data[3] == 0x04) {
-
-            return "zip";
-        }
-
-
-        return null;
-    }
-
-
-    /**
-     * Legacy OLE2 파일의 실제 Office 형식을 확인합니다.
-     */
-    private String detectOle2Extension(byte[] data) {
-
-        File tempFile = null;
-
-        try {
-
-            tempFile =
-                    File.createTempFile(
-                            "ole_detect_",
-                            ".tmp"
-                    );
-
-            Files.write(
-                    tempFile.toPath(),
-                    data
-            );
-
-
-            try (POIFSFileSystem fs =
-                         new POIFSFileSystem(tempFile)) {
-
-                DirectoryNode root =
-                        fs.getRoot();
-
-
-                /*
-                 * Excel
-                 */
-                if (root.hasEntry("Workbook")) {
-                    return "xls";
-                }
-
-
-                /*
-                 * PowerPoint
-                 */
-                if (root.hasEntry("PowerPoint Document")
-                        || root.hasEntry(
-                                "\u0001PowerPoint Document"
-                        )) {
-
-                    return "ppt";
-                }
-
-
-                /*
-                 * Word
-                 */
-                if (root.hasEntry("WordDocument")) {
-                    return "doc";
-                }
-            }
-
-        } catch (Exception e) {
-
-            log.warn(
-                    "[OLE] Legacy OLE 형식 판별 실패 - {}",
-                    e.getMessage()
-            );
-
-        } finally {
-
-            if (tempFile != null) {
-                try {
-                    Files.deleteIfExists(
-                            tempFile.toPath()
-                    );
-                } catch (IOException ignored) {
-                }
-            }
-        }
-
-
-        return "ole";
-    }
-
-
-    /**
-     * Windows 경로에서 실제 파일명만 추출합니다.
+     * C:\test\sample.xlsx
+     *      -> sample.xlsx
+     *
+     * /tmp/sample.xlsx
+     *      -> sample.xlsx
      */
     private String extractFileName(
-            String originalPath) {
+            String fileName
+    ) {
 
-        if (originalPath == null
-                || originalPath.isBlank()) {
-
+        if (fileName == null) {
             return null;
         }
 
-        int index =
-                Math.max(
-                        originalPath.lastIndexOf('\\'),
-                        originalPath.lastIndexOf('/')
-                );
+        String normalized =
+                fileName
+                        .replace("\\", "/")
+                        .trim();
 
-        if (index >= 0
-                && index < originalPath.length() - 1) {
+        int lastSlash =
+                normalized.lastIndexOf('/');
 
-            return originalPath.substring(
-                    index + 1
-            );
+        if (lastSlash >= 0) {
+
+            normalized =
+                    normalized.substring(
+                            lastSlash + 1
+                    );
         }
 
-        return originalPath;
+        return normalized.trim();
     }
 
-
     /**
-     * 파일명에 확장자가 존재하는지 확인합니다.
+     * 확장자가 있는지 확인
      */
     private boolean hasExtension(
-            String fileName) {
+            String fileName
+    ) {
 
         if (fileName == null
                 || fileName.isBlank()) {
@@ -618,111 +577,440 @@ public class OleEmbeddedExtractor {
             return false;
         }
 
-        int index =
+        int dotIndex =
                 fileName.lastIndexOf('.');
 
-        return index > 0
-                && index < fileName.length() - 1;
+        return dotIndex > 0
+                && dotIndex < fileName.length() - 1;
     }
-
 
     /**
-     * 파일명이 이미 존재하면
-     * _1, _2 형태로 새로운 이름을 생성합니다.
+     * 파일명에서 확장자 추출
+     *
+     * test.xlsx -> xlsx
      */
-    private Path createUniqueOutputPath(
-            File outputDirectory,
-            String fileName) {
+    private String getExtensionFromFileName(
+            String fileName
+    ) {
 
-        Path path =
-                outputDirectory.toPath()
-                        .resolve(fileName);
-
-        if (!Files.exists(path)) {
-            return path;
-        }
-
-
-        String extension =
-                getExtension(fileName);
-
-        String baseName =
-                removeExtension(fileName);
-
-
-        int count = 1;
-
-        while (true) {
-
-            String newFileName;
-
-            if (extension.isBlank()) {
-
-                newFileName =
-                        baseName + "_" + count;
-
-            } else {
-
-                newFileName =
-                        baseName
-                                + "_"
-                                + count
-                                + "."
-                                + extension;
-            }
-
-
-            path =
-                    outputDirectory.toPath()
-                            .resolve(newFileName);
-
-
-            if (!Files.exists(path)) {
-                return path;
-            }
-
-            count++;
-        }
-    }
-
-
-    private String removeExtension(
-            String fileName) {
-
-        int index =
-                fileName.lastIndexOf('.');
-
-        if (index <= 0) {
-            return fileName;
-        }
-
-        return fileName.substring(
-                0,
-                index
-        );
-    }
-
-
-    private String getExtension(
-            String fileName) {
-
-        if (fileName == null
-                || fileName.isBlank()) {
-
+        if (!hasExtension(fileName)) {
             return "";
         }
 
-        int index =
+        int dotIndex =
                 fileName.lastIndexOf('.');
-
-        if (index == -1
-                || index == fileName.length() - 1) {
-
-            return "";
-        }
 
         return fileName
-                .substring(index + 1)
+                .substring(dotIndex + 1)
                 .toLowerCase();
+    }
+
+    /**
+     * 확장자 문자열 정리
+     *
+     * .xlsx -> xlsx
+     * xlsx  -> xlsx
+     */
+    private String getExtension(
+            String extension
+    ) {
+
+        if (extension == null) {
+            return "";
+        }
+
+        return extension
+                .trim()
+                .replaceFirst("^\\.", "")
+                .toLowerCase();
+    }
+
+    /**
+     * 파일명에 사용할 수 없는 문자 제거
+     */
+    private String sanitizeFileName(
+            String fileName
+    ) {
+
+        if (fileName == null) {
+            return null;
+        }
+
+        String result =
+                extractFileName(fileName);
+
+        /*
+         * Windows 파일명에서 사용할 수 없는 문자
+         */
+        result =
+                result.replaceAll(
+                        "[\\\\/:*?\"<>|]",
+                        "_"
+                );
+
+        result =
+                result.trim();
+
+        /*
+         * 지나치게 긴 파일명 방지
+         */
+        if (result.length() > 200) {
+
+            result =
+                    result.substring(
+                            0,
+                            200
+                    );
+        }
+
+        return result;
+    }
+
+    /**
+     * Magic Number를 이용한 확장자 추정
+     */
+    private String determineExtensionByMagicNumber(
+            byte[] data
+    ) {
+
+        if (data == null
+                || data.length < 4) {
+
+            return "";
+        }
+
+        /*
+         * PDF
+         */
+        if (startsWith(
+                data,
+                "%PDF".getBytes(
+                        StandardCharsets.US_ASCII
+                )
+        )) {
+
+            return "pdf";
+        }
+
+        /*
+         * PNG
+         */
+        if (startsWith(
+                data,
+                new byte[]{
+                        (byte) 0x89,
+                        0x50,
+                        0x4E,
+                        0x47
+                }
+        )) {
+
+            return "png";
+        }
+
+        /*
+         * JPG
+         */
+        if (startsWith(
+                data,
+                new byte[]{
+                        (byte) 0xFF,
+                        (byte) 0xD8,
+                        (byte) 0xFF
+                }
+        )) {
+
+            return "jpg";
+        }
+
+        /*
+         * ZIP / OOXML
+         *
+         * docx / xlsx / pptx
+         */
+        if (startsWith(
+                data,
+                new byte[]{
+                        0x50,
+                        0x4B,
+                        0x03,
+                        0x04
+                }
+        )) {
+
+            return detectOoxmlExtension(data);
+        }
+
+        /*
+         * OLE2 Compound File
+         */
+        if (startsWith(
+                data,
+                new byte[]{
+                        (byte) 0xD0,
+                        (byte) 0xCF,
+                        0x11,
+                        (byte) 0xE0
+                }
+        )) {
+
+            return detectLegacyOleExtension(
+                    data
+            );
+        }
+
+        return "";
+    }
+
+    /**
+     * OOXML 확장자 확인
+     */
+    private String detectOoxmlExtension(
+            byte[] data
+    ) {
+
+        Path tempFile = null;
+
+        try {
+
+            tempFile =
+                    Files.createTempFile(
+                            "embedded_",
+                            ".zip"
+                    );
+
+            Files.write(
+                    tempFile,
+                    data
+            );
+
+            try (ZipFile zipFile =
+                         new ZipFile(
+                                 tempFile.toFile()
+                         )) {
+
+                ZipEntry contentTypes =
+                        zipFile.getEntry(
+                                "[Content_Types].xml"
+                        );
+
+                if (contentTypes == null) {
+                    return "zip";
+                }
+
+                String xml =
+                        new String(
+                                zipFile
+                                        .getInputStream(
+                                                contentTypes
+                                        )
+                                        .readAllBytes(),
+                                StandardCharsets.UTF_8
+                        );
+
+                /*
+                 * XLSX
+                 */
+                if (xml.contains(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )) {
+
+                    return "xlsx";
+                }
+
+                /*
+                 * PPTX
+                 */
+                if (xml.contains(
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )) {
+
+                    return "pptx";
+                }
+
+                /*
+                 * DOCX
+                 */
+                if (xml.contains(
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )) {
+
+                    return "docx";
+                }
+
+                return "zip";
+            }
+
+        } catch (Exception e) {
+
+            log.debug(
+                    "Failed to detect OOXML extension.",
+                    e
+            );
+
+            return "zip";
+
+        } finally {
+
+            if (tempFile != null) {
+
+                try {
+                    Files.deleteIfExists(
+                            tempFile
+                    );
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * Legacy Office 확장자 확인
+     */
+    private String detectLegacyOleExtension(
+            byte[] data
+    ) {
+
+        Path tempFile = null;
+
+        try {
+
+            tempFile =
+                    Files.createTempFile(
+                            "embedded_",
+                            ".ole"
+                    );
+
+            Files.write(
+                    tempFile,
+                    data
+            );
+
+            try (POIFSFileSystem fs =
+                         new POIFSFileSystem(
+                                 tempFile.toFile()
+                         )) {
+
+                DirectoryNode root =
+                        fs.getRoot();
+
+                /*
+                 * Word
+                 */
+                if (root.hasEntry(
+                        "WordDocument"
+                )) {
+
+                    return "doc";
+                }
+
+                /*
+                 * Excel
+                 */
+                if (root.hasEntry(
+                        "Workbook"
+                )
+                        || root.hasEntry(
+                        "Book"
+                )) {
+
+                    return "xls";
+                }
+
+                /*
+                 * PowerPoint
+                 */
+                if (root.hasEntry(
+                        "PowerPoint Document"
+                )) {
+
+                    return "ppt";
+                }
+            }
+
+        } catch (Exception e) {
+
+            log.debug(
+                    "Failed to detect legacy OLE extension.",
+                    e
+            );
+
+        } finally {
+
+            if (tempFile != null) {
+
+                try {
+                    Files.deleteIfExists(
+                            tempFile
+                    );
+                } catch (IOException ignored) {
+                }
+            }
+        }
+
+        return "ole";
+    }
+
+    /**
+     * byte[]가 prefix로 시작하는지 확인
+     */
+    private boolean startsWith(
+            byte[] data,
+            byte[] prefix
+    ) {
+
+        if (data.length < prefix.length) {
+            return false;
+        }
+
+        for (int i = 0; i < prefix.length; i++) {
+
+            if (data[i] != prefix[i]) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * SHA-256
+     */
+    private String calculateHash(
+            byte[] data
+    ) {
+
+        try {
+
+            MessageDigest digest =
+                    MessageDigest.getInstance(
+                            "SHA-256"
+                    );
+
+            byte[] hash =
+                    digest.digest(data);
+
+            StringBuilder result =
+                    new StringBuilder();
+
+            for (byte b : hash) {
+
+                result.append(
+                        String.format(
+                                "%02x",
+                                b
+                        )
+                );
+            }
+
+            return result.toString();
+
+        } catch (Exception e) {
+
+            throw new RuntimeException(
+                    "Failed to calculate SHA-256.",
+                    e
+            );
+        }
     }
 }
